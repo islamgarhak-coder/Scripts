@@ -1,0 +1,173 @@
+[CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'Medium')]
+param(
+    [string]$Mode = 'Audit'
+)
+
+$ErrorActionPreference = 'Stop'
+if ($Mode -notin @('Audit', 'Remediate')) {
+    throw "Invalid Mode '$Mode'. Use 'Audit' or 'Remediate'."
+}
+
+$reportDirectory = Join-Path $env:ProgramData 'UnquotedServicePaths'
+$ReportPath = Join-Path $reportDirectory ("UnquotedServicePaths-{0}-{1}-{2}.csv" -f $env:COMPUTERNAME, (Get-Date -Format 'yyyyMMdd-HHmmss'), [guid]::NewGuid().ToString('N'))
+$findings = [System.Collections.Generic.List[object]]::new()
+
+try {
+    $services = Get-CimInstance -ClassName Win32_Service
+}
+catch {
+    throw "Unable to enumerate Windows services: $($_.Exception.Message)"
+}
+
+foreach ($service in $services) {
+    $commandLine = [string]$service.PathName
+    if ([string]::IsNullOrWhiteSpace($commandLine)) {
+        continue
+    }
+
+    $trimmedCommandLine = $commandLine.TrimStart()
+    if ($trimmedCommandLine.StartsWith('"')) {
+        continue
+    }
+
+    $exeMatch = [regex]::Match($commandLine, '(?i)\.exe(?=\s|$)')
+    if (-not $exeMatch.Success) {
+        continue
+    }
+
+    $exePath = $commandLine.Substring(0, $exeMatch.Index + $exeMatch.Length)
+    if ($exePath -notmatch '\s') {
+        continue
+    }
+
+    $arguments = $commandLine.Substring($exePath.Length)
+    $expandedExePath = [Environment]::ExpandEnvironmentVariables($exePath)
+    if ($expandedExePath.StartsWith('\??\')) {
+        $expandedExePath = $expandedExePath.Substring(4)
+    }
+    elseif ($expandedExePath.StartsWith('\SystemRoot\', [System.StringComparison]::OrdinalIgnoreCase)) {
+        $expandedExePath = Join-Path $env:SystemRoot $expandedExePath.Substring(12)
+    }
+
+    $record = [ordered]@{
+        ComputerName = $env:COMPUTERNAME
+        ServiceName  = $service.Name
+        DisplayName  = $service.DisplayName
+        State        = $service.State
+        OriginalPath = $commandLine
+        ProposedPath = ''
+        Status       = ''
+        Details      = ''
+    }
+
+    if (-not (Test-Path -LiteralPath $expandedExePath -PathType Leaf)) {
+        $record.Status = 'NeedsReview'
+        $record.Details = "The executable could not be verified at '$expandedExePath'; no change was made."
+        $findings.Add([pscustomobject]$record)
+        continue
+    }
+
+    $newPath = '"' + $exePath + '"' + $arguments
+    $record.ProposedPath = $newPath
+
+    if ($Mode -eq 'Audit') {
+        $record.Status = 'AuditOnly'
+        $record.Details = 'Identified an unquoted executable path. Run with Mode Remediate to apply the quoted path.'
+        $findings.Add([pscustomobject]$record)
+        continue
+    }
+
+    if (-not $PSCmdlet.ShouldProcess("$($service.Name) on $env:COMPUTERNAME", "Set service executable path to $newPath")) {
+        $record.Status = 'NotChanged'
+        $record.Details = 'Change was declined or suppressed by WhatIf.'
+        $findings.Add([pscustomobject]$record)
+        continue
+    }
+
+    try {
+        $result = Invoke-CimMethod -InputObject $service -MethodName Change -Arguments @{ PathName = $newPath }
+        if ($result.ReturnValue -ne 0) {
+            $record.Status = 'Failed'
+            $record.Details = "Win32_Service.Change returned code $($result.ReturnValue)."
+            Write-Warning "$($record.ServiceName): $($record.Details)"
+        }
+        else {
+            $record.Status = 'Remediated'
+            $record.Details = 'The service path was updated. No service was restarted.'
+        }
+    }
+    catch {
+        $record.Status = 'Failed'
+        $record.Details = $_.Exception.Message
+        Write-Warning "$($record.ServiceName): service path update failed: $($record.Details)"
+    }
+
+    $findings.Add([pscustomobject]$record)
+}
+
+try {
+    if (-not (Test-Path -LiteralPath $reportDirectory -PathType Container)) {
+        New-Item -Path $reportDirectory -ItemType Directory -Force | Out-Null
+    }
+    if (Test-Path -LiteralPath $ReportPath) {
+        throw "Report already exists: $ReportPath"
+    }
+
+    if ($findings.Count -gt 0) {
+        $findings | Export-Csv -LiteralPath $ReportPath -NoTypeInformation -Encoding UTF8
+    }
+    else {
+        'ComputerName,ServiceName,DisplayName,State,OriginalPath,ProposedPath,Status,Details' |
+            Set-Content -LiteralPath $ReportPath -Encoding UTF8
+    }
+}
+catch {
+    throw "Unable to write the report to '$ReportPath': $($_.Exception.Message)"
+}
+
+$counts = @{}
+foreach ($finding in $findings) {
+    if (-not $counts.ContainsKey($finding.Status)) {
+        $counts[$finding.Status] = 0
+    }
+    $counts[$finding.Status]++
+}
+
+$summary = if ($findings.Count -eq 0) {
+    'No unquoted service executable paths were identified.'
+}
+else {
+    ($counts.GetEnumerator() | Sort-Object Name | ForEach-Object { "$($_.Name)=$($_.Value)" }) -join '; '
+}
+
+$outputByteLimit = 3000
+$outputLength = 0
+$omittedResults = 0
+foreach ($finding in $findings) {
+    $result = [ordered]@{
+        ComputerName = $finding.ComputerName
+        ServiceName  = $finding.ServiceName
+        Status       = $finding.Status
+        OriginalPath = $finding.OriginalPath
+        ProposedPath = $finding.ProposedPath
+        Details      = $finding.Details
+    }
+    $line = $result | ConvertTo-Json -Compress
+    $lineBytes = [System.Text.Encoding]::UTF8.GetByteCount($line) + 1
+    if (($outputLength + $lineBytes) -gt $outputByteLimit) {
+        $omittedResults++
+        continue
+    }
+
+    Write-Output $line
+    $outputLength += $lineBytes
+}
+
+$summaryResult = [ordered]@{
+    ComputerName   = $env:COMPUTERNAME
+    Mode           = $Mode
+    Summary        = $summary
+    OmittedResults = $omittedResults
+    ReportPath     = $ReportPath
+}
+Write-Output ($summaryResult | ConvertTo-Json -Compress)
