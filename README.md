@@ -1,5 +1,7 @@
 # Windows Scripts
 
+This repository contains Windows administration scripts. The GitHub repository is the source of truth for published scripts and their documentation. Changes to scripts should be accompanied by updated usage documentation and an entry in [CHANGELOG.md](./CHANGELOG.md).
+
 ## Unquoted service executable paths
 
 `Fix-UnquotedServicePaths.ps1` checks local Windows services for unquoted executable paths containing spaces. It does not change anything by default. It records identified paths and paths that need manual review in a timestamped CSV report, and writes compact JSON results to standard output.
@@ -29,3 +31,7 @@ This script is designed to run on a device through **Software Library > Scripts*
 Configuration Manager's Run Scripts output is size-limited. The script caps detailed output at 3,000 UTF-8 bytes and reports the number of omitted service records in its final summary; use the per-device CSV or a separate centralized reporting method if a device has enough findings to exceed that cap. SCCM's script execution status indicates whether the script ran, while each JSON record's `Status` indicates whether a service was audited, remediated, or needs review.
 
 Run and review the report on a pilot computer before targeting a production collection. The script operates on the computer where it runs and does not restart services. Schedule a maintenance window if a service needs restarting to use its updated command line.
+
+## Change history
+
+See [CHANGELOG.md](./CHANGELOG.md) for a record of notable script and documentation changes.
