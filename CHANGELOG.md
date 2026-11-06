@@ -6,8 +6,8 @@ Notable changes to this repository are recorded here. Entries are in reverse chr
 
 ### Added
 
+- Added a separate, read-only `LibcurlInventory\Get-LibcurlInventory.ps1` script for endpoint-level libcurl DLL version, application, and loaded-process inventory through SCCM.
 - Added `notepad.txt` as provided.
-
 - Added `Fix-UnquotedServicePaths.ps1` to audit and optionally remediate unquoted Windows service executable paths.
 - Added Configuration Manager (SCCM) Run Scripts output for per-device service findings, plus a local CSV report under `%ProgramData%\UnquotedServicePaths`.
 - Documented audit, remediation, preview, SCCM deployment, and reporting guidance in the README.

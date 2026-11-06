@@ -32,6 +32,14 @@ Configuration Manager's Run Scripts output is size-limited. The script caps deta
 
 Run and review the report on a pilot computer before targeting a production collection. The script operates on the computer where it runs and does not restart services. Schedule a maintenance window if a service needs restarting to use its updated command line.
 
+## Libcurl inventory
+
+`LibcurlInventory\Get-LibcurlInventory.ps1` is a separate, read-only inventory script. It searches common application, shared-data, user-profile, and Windows system directories, plus install locations registered for installed applications, for `libcurl*.dll` files. It reports file/product versions and flags versions below `8.22.0`. It also checks accessible running processes for loaded modules matching `libcurl*.dll` and correlates them with DLL paths.
+
+The script does not change files, applications, or services and does not query other computers over the network. Deploy it through Configuration Manager **Software Library > Scripts** to inventory endpoints locally. Per-device output is available in **Monitoring > Script Status**; detailed CSV results are saved on each endpoint under `%ProgramData%\LibcurlInventory`. The script limits its JSON output to fit within the Configuration Manager Run Scripts output budget and reports omitted records in the summary.
+
+The `8.22.0` comparison is the requested minimum version, not a claim that it is the latest upstream release. Update the `$minimumVersion` value in the script if your organization adopts a different baseline. Process-module inspection and filesystem enumeration can be restricted by process or directory permissions; the summary reports access and scan errors. A scan only identifies files named `libcurl*.dll`; renamed libraries and files outside the scanned roots may not be found. Application attribution uses registered install locations and DLL metadata, while “LoadedByProcesses” indicates observed runtime use at scan time.
+
 ## Change history
 
 See [CHANGELOG.md](./CHANGELOG.md) for a record of notable script and documentation changes.
